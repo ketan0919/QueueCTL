@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { program } = require('commander');
 const chalk = require('chalk');
+const { fork } = require('child_process');
 
 const { db, DB_PATH } = require('../db');
 const cfg = require('../config');
@@ -22,7 +23,7 @@ function run() {
   program
     .name('queuectl')
     .description('CLI background job queue')
-    .version('0.1.0');
+    .version('0.2.0');
 
   program
     .command('init')
@@ -38,9 +39,9 @@ function run() {
     .command('enqueue')
     .description('Add a job. Accepts JSON string or @file.json')
     .argument('<payload>', 'e.g. \'{"command":"echo hi"}\' or @job.json')
-    .option('--max-retries <n>', 'override max_retries')
-    .option('--priority <n>', 'priority (0=default)')
-    .option('--timeout <ms>', 'timeout in milliseconds')
+    .option('--max-retries <n>')
+    .option('--priority <n>')
+    .option('--timeout <ms>')
     .action((payload, opts) => {
       try {
         const raw = readJSONMaybe(payload);
@@ -82,7 +83,7 @@ function run() {
 
   program
     .command('status')
-    .description('Show counts by state')
+    .description('Show counts by state and running workers')
     .option('--json', 'output as JSON', false)
     .action((opts) => {
       const s = jobs.status();
@@ -103,6 +104,70 @@ function run() {
     .action((key, value) => {
       cfg.set(key, value);
       console.log('ok');
+    });
+
+  program
+    .command('worker start')
+    .description('Start one or more workers')
+    .option('--count <n>', 'number of workers', '1')
+    .action((opts) => {
+      const count = Number(opts.count || 1);
+      const workerPath = path.join(__dirname, '..', 'worker', 'process.js');
+      for (let i = 0; i < count; i++) {
+        const child = fork(workerPath, { stdio: 'inherit', detached: true });
+        child.unref();
+      }
+      console.log(chalk.green(`started ${count} worker(s)`));
+    });
+
+  program
+    .command('worker stop')
+    .description('Stop running workers gracefully')
+    .action(() => {
+      const rows = db.prepare('SELECT pid FROM workers WHERE status="running"').all();
+      rows.forEach(({ pid }) => {
+        try { process.kill(pid, 'SIGTERM'); } catch {}
+      });
+      console.log(chalk.yellow(`sent SIGTERM to ${rows.length} worker(s)`));
+    });
+
+  // DLQ + optionals
+  const dlq = program.command('dlq').description('Dead Letter Queue');
+  dlq.command('list').action(() => {
+    const rows = db.prepare('SELECT job_id, reason, failed_at FROM dlq ORDER BY failed_at DESC').all();
+    if (rows.length === 0) return console.log(chalk.dim('(DLQ empty)'));
+    rows.forEach(r => console.log(`${r.job_id}  ${r.failed_at}  reason="${r.reason || ''}"`));
+  });
+  dlq.command('show').argument('<jobId>').action((jobId) => {
+    const row = db.prepare('SELECT * FROM dlq WHERE job_id = ?').get(jobId);
+    if (!row) return console.log(chalk.yellow('not found in DLQ'));
+    const payload = (() => { try { return JSON.parse(row.payload_json); } catch { return row.payload_json; } })();
+    console.log(JSON.stringify({ job_id: row.job_id, reason: row.reason, failed_at: row.failed_at, payload }, null, 2));
+  });
+  dlq.command('retry').argument('<jobId>').action((jobId) => {
+    const ok = jobs.retryFromDLQ(jobId);
+    console.log(ok ? chalk.green(`retried ${jobId}`) : chalk.yellow(`job ${jobId} not found in DLQ`));
+  });
+
+  program
+    .command('retry')
+    .description('Retry a failed/dead job (dead will pull from DLQ if present)')
+    .argument('<jobId>')
+    .option('--reset', 'reset attempts to 0', false)
+    .action((jobId, opts) => {
+      const res = jobs.retryJob(jobId, !!opts.reset);
+      if (!res.ok) return console.log(chalk.yellow(`retry failed: ${res.reason || 'unknown'}`));
+      console.log(chalk.green(`job ${jobId} moved to pending (from ${res.from || 'unknown'})`));
+    });
+
+  program
+    .command('cancel')
+    .description('Cancel a pending/failed job (mark dead)')
+    .argument('<jobId>')
+    .action((jobId) => {
+      const res = jobs.cancelJob(jobId);
+      if (!res.ok) return console.log(chalk.yellow(`cannot cancel: ${res.reason || 'unknown'}`));
+      console.log(chalk.green('canceled.'));
     });
 
   program.parse(process.argv);
