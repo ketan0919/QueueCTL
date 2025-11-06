@@ -1,0 +1,19 @@
+{
+  "name": "queuectl",
+  "version": "0.1.0",
+  "description": "CLI-based background job queue (Part 1: storage + enqueue/list/show/status; Part 2: workers, retries, DLQ)",
+  "type": "commonjs",
+  "bin": { "queuectl": "./bin/queuectl.js" },
+  "scripts": {
+    "dev": "node bin/queuectl.js",
+    "test:scenarios": "node scripts/run-scenarios.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.1",
+    "chalk": "4.1.2",
+    "commander": "^12.1.0",
+    "nanoid": "^5.0.6",
+    "uuid": "^9.0.1"
+  },
+  "engines": { "node": ">=18" }
+}
