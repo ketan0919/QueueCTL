@@ -1,6 +1,6 @@
 # queuectl
 
-Original CLI background job queue — hand-written (no templates).
+Original CLI background job queue — no templates, hand-written.
 
 ## Features
 Part 1
@@ -15,11 +15,14 @@ Part 2
 - Dead Letter Queue (DLQ) with dlq list/retry
 - Stale processing recovery
 
-Optionals (included)
-- Scheduled jobs via run_at
+Optionals
+- Scheduled jobs via run_at in enqueue payload
 - dlq show <jobId> to inspect payload
-- retry <jobId> [--reset] (failed/dead)
-- cancel <jobId> (pending/failed)
+- retry <jobId> [--reset] for failed/dead
+- cancel <jobId> for pending/failed
+
+## Install
+- npm install
 
 ## Dev usage (no global link)
 - node bin/queuectl.js init
@@ -31,3 +34,20 @@ Optionals (included)
 - node bin/queuectl.js worker stop
 
 (Optional) npm link => use `queuectl` directly.
+
+## Job payload (example)
+{
+  "command": "echo 'Hello World'",
+  "max_retries": 3,
+  "priority": 0,
+  "timeout_ms": 0,
+  "run_at": "2025-12-31T23:59:59.000Z"
+}
+
+## Notes
+- Jobs exceeding max_retries move to DLQ (state=dead). Use dlq retry <id> or retry <id> to requeue.
+- Stale "processing" jobs (older than stale_lock_seconds) are auto-recovered to failed with immediate retry.
+- UPDATE ... RETURNING ensures only one worker claims a job.
+
+## Scenario script
+- npm run test:scenarios
