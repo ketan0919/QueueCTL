@@ -23,13 +23,13 @@ function registerWorker() {
     VALUES(?, ?, 'running', ?, ?)
   `).run(workerId, process.pid, nowIso(), nowIso());
   setInterval(() => {
-    db.prepare('UPDATE workers SET heartbeat_at=? WHERE id=? AND status="running"').run(nowIso(), workerId);
+    db.prepare("UPDATE workers SET heartbeat_at=? WHERE id=? AND status='running'").run(nowIso(), workerId);
   }, 2000).unref();
   recoverStaleProcessing();
 }
 
 function unregisterWorker() {
-  db.prepare(`UPDATE workers SET status='stopped', heartbeat_at=? WHERE id=?`).run(nowIso(), workerId);
+  db.prepare("UPDATE workers SET heartbeat_at=? WHERE id=? AND status='running'").run(nowIso(), workerId);
 }
 
 function recoverStaleProcessing() {
