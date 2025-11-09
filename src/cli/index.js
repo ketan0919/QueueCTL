@@ -18,6 +18,7 @@ function readJSONMaybe(fileOrJson) {
 }
 
 function run() {
+  // ensure DB initialized
   void db;
 
   program
@@ -25,6 +26,7 @@ function run() {
     .description('CLI background job queue')
     .version('0.2.0');
 
+  // init
   program
     .command('init')
     .description('Initialize the database and default config')
@@ -35,6 +37,7 @@ function run() {
       console.log(chalk.dim('Config -> ' + JSON.stringify(cfg.all(), null, 2)));
     });
 
+  // enqueue
   program
     .command('enqueue')
     .description('Add a job. Accepts JSON string or @file.json')
@@ -56,6 +59,7 @@ function run() {
       }
     });
 
+  // list
   program
     .command('list')
     .description('List jobs (optionally filter by state)')
@@ -71,6 +75,7 @@ function run() {
       });
     });
 
+  // show
   program
     .command('show')
     .description('Show a single job by id')
@@ -81,6 +86,7 @@ function run() {
       console.log(JSON.stringify(j, null, 2));
     });
 
+  // status
   program
     .command('status')
     .description('Show counts by state and running workers')
@@ -91,6 +97,7 @@ function run() {
       console.log(s);
     });
 
+  // config
   const cfgCmd = program.command('config').description('Read or change defaults');
   cfgCmd.command('get')
     .argument('[key]')
@@ -106,8 +113,11 @@ function run() {
       console.log('ok');
     });
 
-  program
-    .command('worker start')
+  // worker parent -> start/stop subcommands
+  const worker = program.command('worker').description('Manage workers');
+
+  worker
+    .command('start')
     .description('Start one or more workers')
     .option('--count <n>', 'number of workers', '1')
     .action((opts) => {
@@ -120,38 +130,42 @@ function run() {
       console.log(chalk.green(`started ${count} worker(s)`));
     });
 
-  program
-    .command('worker stop')
+  worker
+    .command('stop')
     .description('Stop running workers gracefully')
     .action(() => {
-      const rows = db.prepare('SELECT pid FROM workers WHERE status="running"').all();
-      rows.forEach(({ pid }) => {
+      const rows = db.prepare("SELECT pid FROM workers WHERE status='running'").all();      rows.forEach(({ pid }) => {
         try { process.kill(pid, 'SIGTERM'); } catch {}
       });
       console.log(chalk.yellow(`sent SIGTERM to ${rows.length} worker(s)`));
     });
 
-  // DLQ + optionals
+  // DLQ group
   const dlq = program.command('dlq').description('Dead Letter Queue');
   dlq.command('list').action(() => {
     const rows = db.prepare('SELECT job_id, reason, failed_at FROM dlq ORDER BY failed_at DESC').all();
     if (rows.length === 0) return console.log(chalk.dim('(DLQ empty)'));
     rows.forEach(r => console.log(`${r.job_id}  ${r.failed_at}  reason="${r.reason || ''}"`));
   });
-  dlq.command('show').argument('<jobId>').action((jobId) => {
-    const row = db.prepare('SELECT * FROM dlq WHERE job_id = ?').get(jobId);
-    if (!row) return console.log(chalk.yellow('not found in DLQ'));
-    const payload = (() => { try { return JSON.parse(row.payload_json); } catch { return row.payload_json; } })();
-    console.log(JSON.stringify({ job_id: row.job_id, reason: row.reason, failed_at: row.failed_at, payload }, null, 2));
-  });
-  dlq.command('retry').argument('<jobId>').action((jobId) => {
-    const ok = jobs.retryFromDLQ(jobId);
-    console.log(ok ? chalk.green(`retried ${jobId}`) : chalk.yellow(`job ${jobId} not found in DLQ`));
-  });
+  dlq.command('show')
+    .argument('<jobId>')
+    .action((jobId) => {
+      const row = db.prepare('SELECT * FROM dlq WHERE job_id = ?').get(jobId);
+      if (!row) return console.log(chalk.yellow('not found in DLQ'));
+      const payload = (() => { try { return JSON.parse(row.payload_json); } catch { return row.payload_json; } })();
+      console.log(JSON.stringify({ job_id: row.job_id, reason: row.reason, failed_at: row.failed_at, payload }, null, 2));
+    });
+  dlq.command('retry')
+    .argument('<jobId>')
+    .action((jobId) => {
+      const ok = jobs.retryFromDLQ(jobId);
+      console.log(ok ? chalk.green(`retried ${jobId}`) : chalk.yellow(`job ${jobId} not found in DLQ`));
+    });
 
+  // retry/cancel helpers
   program
     .command('retry')
-    .description('Retry a failed/dead job (dead will pull from DLQ if present)')
+    .description('Retry a failed/dead job (dead pulls from DLQ if present)')
     .argument('<jobId>')
     .option('--reset', 'reset attempts to 0', false)
     .action((jobId, opts) => {
