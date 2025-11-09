@@ -55,7 +55,8 @@ function list({ state, limit = 50 } = {}) {
 function status() {
   const rows = db.prepare('SELECT state, COUNT(*) as count FROM jobs GROUP BY state').all();
   const map = Object.fromEntries(rows.map(r => [r.state, r.count]));
-  const workers = db.prepare('SELECT COUNT(*) as c FROM workers WHERE status="running"').get();
+  // NOTE: string literal must be single-quoted in SQLite
+  const workers = db.prepare("SELECT COUNT(*) as c FROM workers WHERE status='running'").get();
   return {
     pending: map.pending || 0,
     processing: map.processing || 0,
